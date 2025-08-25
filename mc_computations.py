@@ -1,7 +1,7 @@
 import numpy as np
 from parameters import *
 
-rng = np.random.default_rng(42069)  # the generator used for our experiments, can set a seed for consistency
+rng = np.random.default_rng()  # the generator used for our experiments, can set a seed for consistency
 
 def h_helper(f):
     h=-drug_costs  # holds values of treatments, begin by subtracting costs
