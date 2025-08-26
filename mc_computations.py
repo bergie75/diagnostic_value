@@ -43,4 +43,19 @@ if __name__ == "__main__":
     p_test_vals = np.array(range(0, num_patients+1))/num_patients
     obj_fun_vals = np.array([objective_function(p_test) for p_test in p_test_vals])
     plt.plot(p_test_vals, obj_fun_vals)
+    plt.title("Tradeoffs between public and private value of diagnostics")
+    plt.xlabel("Fraction tested")
+    plt.ylabel("Net benefit ($)")
     plt.show()
+
+    # a small diagnostic to see how likely the prior is to pick out the correct treatment choice
+    # print(true_scores)
+    # count_correct = 0
+    # max_index = np.argmax(true_scores)
+
+    # for _ in range(0, prior_update_realizations):
+    #     f_realized = rng.dirichlet(m*f_0)
+    #     f_scores = h_helper(f_realized)
+    #     count_correct += (np.argmax(f_scores) == max_index)
+    
+    # print(f"Probability of correct choice = {count_correct/prior_update_realizations*100}")
