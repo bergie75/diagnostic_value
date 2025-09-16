@@ -2,7 +2,7 @@
 import numpy as np
 from scipy.special import betainc
 import matplotlib.pyplot as plt
-from example_with_maximum import exported_parameters, par_indices
+from example_with_maximum import exported_parameters
 # logistical
 import os
 import itertools
@@ -11,13 +11,13 @@ import itertools
 rng = np.random.default_rng()
 
 def res_ben_matrix(parameters=exported_parameters):
-    num_treatments = parameters[par_indices["num_treatments"]]
-    num_pathogens = parameters[par_indices["num_pathogens"]]
-    resistance = parameters[par_indices["resistance"]]
-    cost_per_qaly = parameters[par_indices["cost_per_qaly"]]
-    qaly_if_res = parameters[par_indices["qaly_if_res"]]
-    qaly_if_susc = parameters[par_indices["qaly_if_susc"]]
-    cost_res = parameters[par_indices["cost_res"]]
+    num_treatments = parameters["num_treatments"]
+    num_pathogens = parameters["num_pathogens"]
+    resistance = parameters["resistance"]
+    cost_per_qaly = parameters["cost_per_qaly"]
+    qaly_if_res = parameters["qaly_if_res"]
+    qaly_if_susc = parameters["qaly_if_susc"]
+    cost_res = parameters["cost_res"]
 
     res_benefit_matrix = np.zeros((num_treatments, num_pathogens))
     for i in range(0, num_treatments):
@@ -29,7 +29,7 @@ def res_ben_matrix(parameters=exported_parameters):
             
 def opt_net_benefits(res_benefit_matrix, parameters=exported_parameters):
     optimal_net_benefits_list = []
-    num_pathogens = parameters[par_indices["num_pathogens"]]
+    num_pathogens = parameters["num_pathogens"]
 
     for j in range(0, num_pathogens):
         benefits = res_benefit_matrix[:,j]
@@ -38,8 +38,8 @@ def opt_net_benefits(res_benefit_matrix, parameters=exported_parameters):
     return np.array(optimal_net_benefits_list)
 
 def h_helper(f, parameters=exported_parameters):
-    drug_costs = parameters[par_indices["drug_costs"]]
-    res_benefit_matrix = res_ben_matrix(parameters)
+    drug_costs = parameters["drug_costs"]
+    res_benefit_matrix = res_ben_matrix(parameters=parameters)
     return -drug_costs + np.matmul(res_benefit_matrix, f)  # holds values of treatments, begin by subtracting costs
 
 # returns the argument of the best empirical diagnosis given that the believed distribution is f_realized
@@ -48,15 +48,14 @@ def argmax_helper(f_realized):
 
 def objective_function_for_2_by_2(p_test, parameters=exported_parameters, print_update=False):
     # unpack needed values from parameter list
-    drug_costs = parameters[par_indices["drug_costs"]]
-    cost_test = parameters[par_indices["cost_test"]]
-    diagnostic_realizations = parameters[par_indices["diagnostic_realizations"]]
-    num_patients = parameters[par_indices["num_patients"]]
-    num_treatments = parameters[par_indices["num_treatments"]]
-    f_true = parameters[par_indices["f_true"]]
-    prior_alpha = parameters[par_indices["m"]]*parameters[par_indices["f_0"]]
-    p_ignore = parameters[par_indices["p_ignore"]]
-    f_true = parameters[par_indices["f_true"]]
+    drug_costs = parameters["drug_costs"]
+    cost_test = parameters["cost_test"]
+    diagnostic_realizations = parameters["diagnostic_realizations"]
+    num_patients = parameters["num_patients"]
+    num_treatments = parameters["num_treatments"]
+    prior_alpha = parameters["m"]*parameters["f_0"]
+    p_ignore = parameters["p_ignore"]
+    f_true = parameters["f_true"]
     
     # compute useful intermediate quantities with parameter list
     res_benefit_matrix = res_ben_matrix(parameters)
@@ -94,8 +93,58 @@ def objective_function_for_2_by_2(p_test, parameters=exported_parameters, print_
 
     return obj_value
 
+# the objective function for the restricted scenario when a physician only considers two possible
+# pathogen distributions. dis1_prevalences holds the amount of pathogen 1 for each distribution
+def analytic_objective(p_test, dis1_prevalences, parameters=exported_parameters):
+    # unpack needed values from parameter list
+    cost_test = parameters["cost_test"]
+    num_patients = parameters["num_patients"]
+
+    # compute useful intermediate quantities with parameter list
+    res_benefit_matrix = res_ben_matrix(parameters)
+    optimal_net_benefits = opt_net_benefits(res_benefit_matrix, parameters)
+
+    # expand input parameters to full distributions in physician's prior
+    f_a = np.array([dis1_prevalences[0], 1-dis1_prevalences[0]])
+    f_b = np.array([dis1_prevalences[1], 1-dis1_prevalences[1]])
+    f_true = parameters["f_true"]
+
+    # compute all necessary empirical helper function values
+    h_true = h_helper(f_true, parameters=parameters)
+    h_a = h_helper(f_a, parameters=parameters)
+    h_b = h_helper(f_b, parameters=parameters)
+
+    # compute a quantity that determines how the 50-50 prior is updated
+    # the logic of this function is not currently designed for cases
+    # when the true prior is entirely concentrated on one pathogen, and f_a is as well
+    if 0 < f_a[0] < 1:
+        r = (f_b[0]/f_a[0])**(f_true[0])*(f_b[1]/f_a[1])**(f_true[1])
+    else:
+        r=np.inf
+
+    # updated posterior probability that the physician believes the true distribution is a
+    # avoid overflow errors from large numbers
+    probability_actually_a = r**(-num_patients*p_test)/(1+r**(-num_patients*p_test))
+
+    # add private value
+    obj_val = p_test*np.dot(f_true, optimal_net_benefits-cost_test)
+
+    # these two if statements determine the treatments the doctor believes to be optimal
+    # and adds the corresponding expected value
+    if h_a[0] >= h_a[1]:
+        obj_val += (1-p_test)*probability_actually_a*h_true[0]
+    else:
+        obj_val += (1-p_test)*probability_actually_a*h_true[1]
+
+    if h_b[0] >= h_b[1]:
+        obj_val += (1-p_test)*(1-probability_actually_a)*h_true[0]
+    else:
+        obj_val += (1-p_test)*(1-probability_actually_a)*h_true[1]
+
+    return obj_val
+
 def find_critical_cost(parameters=exported_parameters):
-    f_true = parameters[par_indices["f_true"]]
+    f_true = parameters["f_true"]
     res_benefit_matrix = res_ben_matrix(parameters=parameters)
     optimal_net_benefits = opt_net_benefits(res_benefit_matrix, parameters=exported_parameters)
     
@@ -110,7 +159,7 @@ def run_experiment(experiment_name, vars_changed, changes_to_try, local_params=e
         os.makedirs(save_to)
 
     # generate testing frequencies
-    num_patients = exported_parameters[par_indices["num_patients"]]  # a constant from our configuration file
+    num_patients = exported_parameters["num_patients"]  # a constant from our configuration file
     p_test_vals = np.array(range(0, num_patients+1))/num_patients
 
     # generate tests
@@ -123,7 +172,7 @@ def run_experiment(experiment_name, vars_changed, changes_to_try, local_params=e
         
         for i,var_name in enumerate(vars_changed):
             label += f"{var_name}_{combo[i]}_"
-            local_params[par_indices[var_name]] = combo[i]
+            local_params[var_name] = combo[i]
         
         label = label[:-1]  # strip trailing underscore
 
@@ -138,57 +187,50 @@ def run_experiment(experiment_name, vars_changed, changes_to_try, local_params=e
     plt.legend([f"{combo}" for combo in combinations])
     plt.show()
 
+# could probably rewrite this with regex if needed
+def plot_results(experiment_name, constant_vars, constant_vals, varying, varying_vals=None):
+    cwd = os.getcwd()
+    prefix_folder = os.path.join(cwd,"diagnostic_value","longer_runs",experiment_name)
+    
+    # filter the directory to find relevant files
+    filters = [f"{constant_vars[i]}_{constant_vals[i]}" for i in range(0,len(constant_vars))]
+    # only allow files which mention the intended values to plot, use all if unspecified
+    if varying_vals is not None:
+        for value in varying_vals:
+            filters.append(f"{varying}_{value}")
+    else:
+        filters.append(varying)
+    
+    legend_labels = []
+    for result in os.listdir(prefix_folder):
+        include = True
+        for filter in filters:
+            include = (include and (result.find(filter) != -1))
+        if include:
+            numpy_starts = result.find(".npy")  # used to generate legend label
+            obj_vals = np.load(os.path.join(prefix_folder,result))
+            p_vals = np.linspace(0,1,len(obj_vals))
+            argmax_index = int(np.argmax(obj_vals))
+            plt.plot(p_vals, obj_vals)
+            plt.scatter(p_vals[argmax_index], obj_vals[argmax_index], color="r", label="_nolegend_")
+            legend_labels.append(result[:numpy_starts])
+
+    plt.xlabel("probability of diagnostic")
+    plt.ylabel("expected net benefit per patient")
+    plt.legend(legend_labels)    
+    plt.show()
+
 if __name__ == "__main__":
-    vars_changed = ["cost_test", "p_ignore"]
-    changes_to_try = [np.linspace(4,6,11), [1]]
-    run_experiment("ignoring_tests", vars_changed, changes_to_try)
-    # cwd = os.getcwd()
-    # filename = "ignoring_tests"
-    # save_to = os.path.join(cwd,"diagnostic_value","longer_runs", filename)
+    # vars_changed = ["cost_test", "p_ignore"]
+    # changes_to_try = [np.linspace(4,6,11), [1]]
+    # run_experiment("ignoring_tests", vars_changed, changes_to_try)
+    # plot_results("ignoring_tests",["p_ignore"],[1],"cost_test")
+    num_patients = exported_parameters["num_patients"]
+    dis1_prevalences = np.array([0.1, 0.8])
+    local_params = exported_parameters
+    local_params["qaly_if_res"] = exported_parameters["qaly_if_res"]
+    p_vals = np.linspace(0,1,num_patients+1)
+    obj_vals = [analytic_objective(p_test, dis1_prevalences, parameters=local_params) for p_test in p_vals]
 
-    # if not os.path.exists(save_to):
-    #     os.makedirs(save_to)
-
-    # num_patients = exported_parameters[par_indices["num_patients"]]  # a constant from our configuration file
-    # p_test_vals = np.array(range(0, num_patients+1))/num_patients
-    # test_cost_vals = np.linspace(2,4,11)  # we will examine these costs to see how the net benefit curve changes
-    # local_params = exported_parameters
-    # ignore_probs = [1]
-    # # worse_res_factor = 1
-    # # local_params[par_indices["qaly_if_res"]] = local_params[par_indices["qaly_if_res"]]/worse_res_factor
-    # # local_params[par_indices["cost_test"]] = find_critical_cost(local_params)
-    
-    # for cost_test in test_cost_vals:
-    #     for ignore_prob in ignore_probs:
-    #         print(f"Working on test cost=${cost_test}")
-    #         local_params[par_indices["p_ignore"]] = ignore_prob
-    #         local_params[par_indices["cost_test"]] = cost_test
-    #         obj_fun_vals = np.array([objective_function_for_2_by_2(p_test, parameters=local_params) for p_test in p_test_vals])
-    #         plt.plot(p_test_vals, obj_fun_vals)
-    #         plt.title("Tradeoffs between public and private value of diagnostics")
-    #         plt.xlabel("Net benefit ($)")
-    #         plt.ylabel("Sum of public and private net benefit")
-    #         np.save(os.path.join(save_to, f"test_cost_{cost_test}_ignore_prob_{ignore_prob}"), obj_fun_vals)  # save results to view later
-
-    # plt.legend([f"${cost_test:.2f}" for cost_test in test_cost_vals])
-    # plt.show()
-
-    # p_test_vals = np.array(range(0, num_patients+1))/num_patients
-    # evsi_vals = np.array([evsi(p_test) for p_test in p_test_vals])
-    # plt.plot(p_test_vals, evsi_vals)
-    # plt.title("EVSI of testing")
-    # plt.xlabel("Fraction tested")
-    # plt.ylabel("EVSI ($)")
-    # plt.show()
-
-    # a small diagnostic to see how likely the prior is to pick out the correct treatment choice
-    # print(true_scores)
-    # count_correct = 0
-    # max_index = np.argmax(true_scores)
-
-    # for _ in range(0, prior_update_realizations):
-    #     f_realized = rng.dirichlet(m*f_0)
-    #     f_scores = h_helper(f_realized)
-    #     count_correct += (np.argmax(f_scores) == max_index)
-    
-    # print(f"Probability of correct choice = {count_correct/prior_update_realizations*100}")
+    plt.plot(p_vals, obj_vals)
+    plt.show()
