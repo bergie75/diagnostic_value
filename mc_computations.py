@@ -23,16 +23,17 @@ def res_ben_matrix(parameters=exported_parameters):
     for i in range(0, num_treatments):
       for j in range(0, num_pathogens):
             r_ij = resistance[i,j]
-            res_benefit_matrix[i,j] = resistance[i,j]*(r_ij*(cost_per_qaly*qaly_if_res[i]-cost_res[j])+(1-r_ij)*cost_per_qaly*qaly_if_susc[i])
+            res_benefit_matrix[i,j] = r_ij*(cost_per_qaly*qaly_if_res[i]-cost_res[j])+(1-r_ij)*cost_per_qaly*qaly_if_susc[i]
     
     return res_benefit_matrix
             
 def opt_net_benefits(res_benefit_matrix, parameters=exported_parameters):
     optimal_net_benefits_list = []
     num_pathogens = parameters["num_pathogens"]
+    drug_costs = parameters["drug_costs"]
 
     for j in range(0, num_pathogens):
-        benefits = res_benefit_matrix[:,j]
+        benefits = res_benefit_matrix[:,j]-drug_costs[j]
         optimal_net_benefits_list.append(np.max(benefits))
 
     return np.array(optimal_net_benefits_list)
@@ -95,7 +96,7 @@ def objective_function_for_2_by_2(p_test, parameters=exported_parameters, print_
 
 # the objective function for the restricted scenario when a physician only considers two possible
 # pathogen distributions. dis1_prevalences holds the amount of pathogen 1 for each distribution
-def analytic_objective(p_test, dis1_prevalences, parameters=exported_parameters):
+def analytic_objective(p_test, dis1_prevalences, weights=np.array([0.5, 0.5]), parameters=exported_parameters):
     # unpack needed values from parameter list
     cost_test = parameters["cost_test"]
     num_patients = parameters["num_patients"]
@@ -124,7 +125,7 @@ def analytic_objective(p_test, dis1_prevalences, parameters=exported_parameters)
 
     # updated posterior probability that the physician believes the true distribution is a
     # avoid overflow errors from large numbers
-    probability_actually_a = r**(-num_patients*p_test)/(1+r**(-num_patients*p_test))
+    probability_actually_a = weights[0]*r**(-num_patients*p_test)/(weights[1]+weights[0]*r**(-num_patients*p_test))
 
     # add private value
     obj_val = p_test*np.dot(f_true, optimal_net_benefits-cost_test)
@@ -188,7 +189,7 @@ def run_experiment(experiment_name, vars_changed, changes_to_try, local_params=e
     plt.show()
 
 # could probably rewrite this with regex if needed
-def plot_results(experiment_name, constant_vars, constant_vals, varying, varying_vals=None):
+def plot_results(experiment_name, varying, constant_vars=[], constant_vals=[], varying_vals=None, given_labels=None):
     cwd = os.getcwd()
     prefix_folder = os.path.join(cwd,"diagnostic_value","longer_runs",experiment_name)
     
@@ -201,36 +202,33 @@ def plot_results(experiment_name, constant_vars, constant_vals, varying, varying
     else:
         filters.append(varying)
     
-    legend_labels = []
+    if given_labels is None:
+        legend_labels = []
+    else:
+        legend_labels = given_labels
+    
     for result in os.listdir(prefix_folder):
-        include = True
+        include = False
         for filter in filters:
-            include = (include and (result.find(filter) != -1))
+            include = (include or (result.find(filter) != -1))
         if include:
-            numpy_starts = result.find(".npy")  # used to generate legend label
             obj_vals = np.load(os.path.join(prefix_folder,result))
             p_vals = np.linspace(0,1,len(obj_vals))
             argmax_index = int(np.argmax(obj_vals))
             plt.plot(p_vals, obj_vals)
             plt.scatter(p_vals[argmax_index], obj_vals[argmax_index], color="r", label="_nolegend_")
-            legend_labels.append(result[:numpy_starts])
-
+            
+            if given_labels is None:
+                numpy_starts = result.find(".npy")  # used to generate legend label
+                legend_labels.append(result[:numpy_starts])
+                
     plt.xlabel("probability of diagnostic")
-    plt.ylabel("expected net benefit per patient")
+    plt.ylabel("expected net benefit per patient ($)")
     plt.legend(legend_labels)    
     plt.show()
 
 if __name__ == "__main__":
-    # vars_changed = ["cost_test", "p_ignore"]
-    # changes_to_try = [np.linspace(4,6,11), [1]]
-    # run_experiment("ignoring_tests", vars_changed, changes_to_try)
-    # plot_results("ignoring_tests",["p_ignore"],[1],"cost_test")
-    num_patients = exported_parameters["num_patients"]
-    dis1_prevalences = np.array([0.1, 0.8])
-    local_params = exported_parameters
-    local_params["qaly_if_res"] = exported_parameters["qaly_if_res"]
-    p_vals = np.linspace(0,1,num_patients+1)
-    obj_vals = [analytic_objective(p_test, dis1_prevalences, parameters=local_params) for p_test in p_vals]
-
-    plt.plot(p_vals, obj_vals)
-    plt.show()
+    # vars_changed = ["f_true"]
+    # changes_to_try = [[np.array([0.1,0.9]),np.array([0.3,0.7]),np.array([0.5,0.5]),np.array([0.7,0.3]),np.array([0.9,0.1])]]
+    # run_experiment("revised_distribution_bias", vars_changed, changes_to_try)
+    plot_results("revised_distribution_bias","f_true",varying_vals=["[0.1 0.9]","[0.3 0.7]","[0.5 0.5]","[0.7 0.3]","[0.9 0.1]"],given_labels=["10%", "30%", "50%","70%","90%"])
