@@ -202,10 +202,11 @@ def find_critical_cost(parameters=exported_parameters):
     
     return np.dot(f_true, optimal_net_benefits)
 
-def run_experiment(experiment_name, vars_changed, changes_to_try, local_params=exported_parameters):
+def run_experiment(experiment_name, vars_changed, changes_to_try, local_params=exported_parameters, plot_results=True):
     # preliminaries to save the results
     cwd = os.getcwd()
     save_to = os.path.join(cwd,"diagnostic_value","longer_runs", experiment_name)
+    optimal_testing_frequencies = []
 
     if not os.path.exists(save_to):
         os.makedirs(save_to)
@@ -234,7 +235,12 @@ def run_experiment(experiment_name, vars_changed, changes_to_try, local_params=e
 
         # carry out experiment and add results to plot
         obj_fun_vals = np.array([objective_function_for_2_by_2(p_test, parameters=local_params) for p_test in p_test_vals])
-        plt.plot(p_test_vals, obj_fun_vals)
+        argmax_index = int(np.argmax(obj_fun_vals))
+        optimal_test_frequency = p_test_vals[argmax_index]
+        optimal_testing_frequencies.append(optimal_test_frequency)
+        
+        if plot_results:
+            plt.plot(p_test_vals, obj_fun_vals)
         try:
             np.save(os.path.join(save_to, label), obj_fun_vals)  # save results to view later
         except:
@@ -242,11 +248,15 @@ def run_experiment(experiment_name, vars_changed, changes_to_try, local_params=e
             np.save(os.path.join(save_to, f"failed_save_{failed_saves}"), obj_fun_vals)
             print(f"Combination {combo} saved under failed_save_{failed_saves}")
 
-    plt.title("Tradeoffs between public and private value of diagnostics")
-    plt.xlabel("Net benefit ($)")
-    plt.ylabel("Sum of public and private net benefit")
-    plt.legend([f"{combo}" for combo in combinations])
-    plt.show()
+    if plot_results:
+        plt.title("Tradeoffs between public and private value of diagnostics")
+        plt.xlabel("Net benefit ($)")
+        plt.ylabel("Sum of public and private net benefit")
+        plt.legend([f"{combo}" for combo in combinations])
+        plt.show()
+    
+    argmax_index = int(np.argmax(obj_fun_vals))
+    return optimal_testing_frequencies
 
 # could probably rewrite this with regex if needed
 def plot_results(experiment_name, varying, constant_vars=[], constant_vals=[], varying_vals=None, given_labels=None):
@@ -287,6 +297,26 @@ def plot_results(experiment_name, varying, constant_vars=[], constant_vals=[], v
     plt.legend(legend_labels)    
     plt.show()
 
+def run_temporal_experiment(experiment_name, prior_sequence, prior_decay_rate=1, local_params=exported_parameters):
+    optimal_testing_frequencies = []
+    period_params = local_params.copy()
+    for prevalence in prior_sequence:
+        f_true = np.array([prevalence,1-prevalence])
+        period_params["m"] = period_params["m"]*prior_decay_rate  # to allow physician's to ignore older information
+        subpath = os.path.join(experiment_name, f"decay_rate_{prior_decay_rate:.4f}")
+        optimal_freq = run_experiment(subpath, ["f_true"], [f_true], local_params=period_params.copy(), plot_results=False)[0]
+
+        # after conducting the experiment for the current period, update the prior for the next period
+        alpha = period_params["m"]*period_params["f_0"]+period_params["num_patients"]*optimal_freq*f_true  # update prior
+        alpha_magnitude = np.sum(alpha)
+        period_params["m"] = alpha_magnitude
+        period_params["f_0"] = alpha/alpha_magnitude
+
+        # add results to output
+        optimal_testing_frequencies.append(optimal_freq)
+
+    return optimal_testing_frequencies
+
 if __name__ == "__main__":
     # vars_changed = ["f_true"]
     changes_to_try = [[np.array([0.1,0.9]), np.array([0.3,0.7]), np.array([0.5,0.5]), np.array([0.7,0.3]), np.array([0.9,0.1])]]
@@ -294,5 +324,4 @@ if __name__ == "__main__":
     #choices = [0.8,1.0,1.2,1.4]
     choices=[f"[{x[0]} {x[1]}]" for x in changes_to_try[0]]
     labels = [f"{int(100*x[0])}%" for x in changes_to_try[0]]
-    print(choices)
     plot_results("revised_distribution_bias","f_true",varying_vals=choices,given_labels=labels)
