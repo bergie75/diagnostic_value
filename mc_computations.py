@@ -6,6 +6,7 @@ from example_with_maximum import exported_parameters
 # logistical
 import os
 import itertools
+from multiprocessing import Pool
 
 # the generator used for our experiments, can set a seed for consistency
 rng = np.random.default_rng()
@@ -27,21 +28,21 @@ def res_ben_matrix(parameters=exported_parameters):
     
     return res_benefit_matrix
             
-def opt_net_benefits(res_benefit_matrix, parameters=exported_parameters):
-    optimal_net_benefits_list = []
-    num_pathogens = parameters["num_pathogens"]
-    drug_costs = parameters["drug_costs"]
-
-    for j in range(0, num_pathogens):
-        benefits = res_benefit_matrix[:,j]-drug_costs[j]
-        optimal_net_benefits_list.append(np.max(benefits))
-
-    return np.array(optimal_net_benefits_list)
-
 def h_helper(f, parameters=exported_parameters):
     drug_costs = parameters["drug_costs"]
     res_benefit_matrix = res_ben_matrix(parameters=parameters)
     return -drug_costs + np.matmul(res_benefit_matrix, f)  # holds values of treatments, begin by subtracting costs
+
+def opt_net_benefits(parameters=exported_parameters):
+    optimal_net_benefits_list = []
+    num_pathogens = parameters["num_pathogens"]
+
+    for j in range(0, num_pathogens):
+        e_j = np.eye(1,num_pathogens,j).reshape(-1,1)  # create a standard basis vector representing all disease being caused by jth pathogen
+        benefits = h_helper(e_j, parameters=parameters)
+        optimal_net_benefits_list.append(np.max(benefits))
+
+    return np.array(optimal_net_benefits_list)
 
 # returns the argument of the best empirical diagnosis given that the believed distribution is f_realized
 def argmax_helper(f_realized):
@@ -60,7 +61,7 @@ def objective_function_for_2_by_2(p_test, parameters=exported_parameters, print_
     
     # compute useful intermediate quantities with parameter list
     res_benefit_matrix = res_ben_matrix(parameters)
-    optimal_net_benefits = opt_net_benefits(res_benefit_matrix, parameters)
+    optimal_net_benefits = opt_net_benefits(parameters)
     true_scores = h_helper(f_true)
     
     # an accumulator for the empirical treatment part of the objective function
@@ -94,6 +95,58 @@ def objective_function_for_2_by_2(p_test, parameters=exported_parameters, print_
 
     return obj_value
 
+def objective_function_for_2_by_2_parallel(p_test, parameters=exported_parameters, print_update=False):
+    # unpack needed values from parameter list
+    drug_costs = parameters["drug_costs"]
+    cost_test = parameters["cost_test"]
+    diagnostic_realizations = parameters["diagnostic_realizations"]
+    num_patients = parameters["num_patients"]
+    num_treatments = parameters["num_treatments"]
+    prior_alpha = parameters["m"]*parameters["f_0"]
+    p_ignore = parameters["p_ignore"]
+    f_true = parameters["f_true"]
+    
+    # compute useful intermediate quantities with parameter list
+    res_benefit_matrix = res_ben_matrix(parameters)
+    optimal_net_benefits = opt_net_benefits(parameters)
+    true_scores = h_helper(f_true)
+    
+    # an accumulator for the empirical treatment part of the objective function
+    emp_net_benefit_estimate = 0
+
+    # compute thresholds for comparisons
+    thresh_num = drug_costs[0]-drug_costs[1]+res_benefit_matrix[1,1]-res_benefit_matrix[0,1]
+    thresh_denom = res_benefit_matrix[0,0]+res_benefit_matrix[1,1]-res_benefit_matrix[0,1]-res_benefit_matrix[1,0]
+    threshold = thresh_num/thresh_denom
+
+    def simulate_diagnostics():
+        # each thread gets own rng
+        local_rng = np.random.default_rng()
+        # one run of testing p_test of our patients to improve empirical diagnoses
+        other_diagnostics = local_rng.multinomial((num_patients-1)*p_test, f_true)
+        prob_estimates = np.zeros(num_treatments)  # will hold probability of treatment being best
+        # update prior based on the results of our randomly generated measurements
+        posterior_alpha = prior_alpha + other_diagnostics
+
+        # use theoretical results to skip inner loop
+        prob_estimates[1] = betainc(posterior_alpha[0],posterior_alpha[1],threshold)
+        prob_estimates[0] = 1-prob_estimates[1]
+        
+        return np.dot(prob_estimates, true_scores)
+    
+    # perform Monte-Carlo sampling
+    with Pool(diagnostic_realizations) as p:
+        parallel_diagnostics = p.map(simulate_diagnostics, range(0, diagnostic_realizations))
+        
+    emp_net_benefit_estimate = np.mean(parallel_diagnostics)
+    testing_net_benefit = np.dot(f_true, optimal_net_benefits)-cost_test
+    obj_value = (1-(1-p_ignore)*p_test)*emp_net_benefit_estimate + (1-p_ignore)*p_test*testing_net_benefit - p_test*p_ignore*cost_test
+
+    if print_update:
+        print(f"Completed calculation for {p_test}")
+
+    return obj_value
+
 # the objective function for the restricted scenario when a physician only considers two possible
 # pathogen distributions. dis1_prevalences holds the amount of pathogen 1 for each distribution
 def analytic_objective(p_test, dis1_prevalences, weights=np.array([0.5, 0.5]), parameters=exported_parameters):
@@ -102,8 +155,7 @@ def analytic_objective(p_test, dis1_prevalences, weights=np.array([0.5, 0.5]), p
     num_patients = parameters["num_patients"]
 
     # compute useful intermediate quantities with parameter list
-    res_benefit_matrix = res_ben_matrix(parameters)
-    optimal_net_benefits = opt_net_benefits(res_benefit_matrix, parameters)
+    optimal_net_benefits = opt_net_benefits(parameters)
 
     # expand input parameters to full distributions in physician's prior
     f_a = np.array([dis1_prevalences[0], 1-dis1_prevalences[0]])
@@ -146,8 +198,7 @@ def analytic_objective(p_test, dis1_prevalences, weights=np.array([0.5, 0.5]), p
 
 def find_critical_cost(parameters=exported_parameters):
     f_true = parameters["f_true"]
-    res_benefit_matrix = res_ben_matrix(parameters=parameters)
-    optimal_net_benefits = opt_net_benefits(res_benefit_matrix, parameters=exported_parameters)
+    optimal_net_benefits = opt_net_benefits(parameters=exported_parameters)
     
     return np.dot(f_true, optimal_net_benefits)
 
@@ -164,8 +215,12 @@ def run_experiment(experiment_name, vars_changed, changes_to_try, local_params=e
     p_test_vals = np.array(range(0, num_patients+1))/num_patients
 
     # generate tests
-    combinations = list(itertools.product(*changes_to_try))
+    if len(changes_to_try) > 1:
+        combinations = list(itertools.product(*changes_to_try))
+    else:
+        combinations = list(itertools.product(changes_to_try[0]))
     
+    failed_saves = 0
     for combo in combinations:
         # prepare to save results to specific file and change local variables for experiment
         print(f"Working on combination={combo}")
@@ -180,7 +235,12 @@ def run_experiment(experiment_name, vars_changed, changes_to_try, local_params=e
         # carry out experiment and add results to plot
         obj_fun_vals = np.array([objective_function_for_2_by_2(p_test, parameters=local_params) for p_test in p_test_vals])
         plt.plot(p_test_vals, obj_fun_vals)
-        np.save(os.path.join(save_to, label), obj_fun_vals)  # save results to view later
+        try:
+            np.save(os.path.join(save_to, label), obj_fun_vals)  # save results to view later
+        except:
+            failed_saves += 1
+            np.save(os.path.join(save_to, f"failed_save_{failed_saves}"), obj_fun_vals)
+            print(f"Combination {combo} saved under failed_save_{failed_saves}")
 
     plt.title("Tradeoffs between public and private value of diagnostics")
     plt.xlabel("Net benefit ($)")
@@ -229,6 +289,10 @@ def plot_results(experiment_name, varying, constant_vars=[], constant_vals=[], v
 
 if __name__ == "__main__":
     # vars_changed = ["f_true"]
-    # changes_to_try = [[np.array([0.1,0.9]),np.array([0.3,0.7]),np.array([0.5,0.5]),np.array([0.7,0.3]),np.array([0.9,0.1])]]
+    changes_to_try = [[np.array([0.1,0.9]), np.array([0.3,0.7]), np.array([0.5,0.5]), np.array([0.7,0.3]), np.array([0.9,0.1])]]
     # run_experiment("revised_distribution_bias", vars_changed, changes_to_try)
-    plot_results("revised_distribution_bias","f_true",varying_vals=["[0.1 0.9]","[0.3 0.7]","[0.5 0.5]","[0.7 0.3]","[0.9 0.1]"],given_labels=["10%", "30%", "50%","70%","90%"])
+    #choices = [0.8,1.0,1.2,1.4]
+    choices=[f"[{x[0]} {x[1]}]" for x in changes_to_try[0]]
+    labels = [f"{int(100*x[0])}%" for x in changes_to_try[0]]
+    print(choices)
+    plot_results("revised_distribution_bias","f_true",varying_vals=choices,given_labels=labels)
