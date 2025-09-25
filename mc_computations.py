@@ -1,12 +1,13 @@
 # math and user-defined
 import numpy as np
-from scipy.special import betainc
+from scipy.special import betainc, beta
 import matplotlib.pyplot as plt
 from example_with_maximum import exported_parameters
 # logistical
 import os
 import itertools
 from multiprocessing import Pool
+import re
 
 # the generator used for our experiments, can set a seed for consistency
 rng = np.random.default_rng()
@@ -47,6 +48,16 @@ def opt_net_benefits(parameters=exported_parameters):
 # returns the argument of the best empirical diagnosis given that the believed distribution is f_realized
 def argmax_helper(f_realized):
     return np.argmax(h_helper(f_realized))
+
+def dirichlet_pdf(x, alpha, tol=10**(-10)):
+    # support defined only for values in the probability simplex
+    if abs(1-np.sum(x)) > tol:
+        return 0
+    
+    pdf = 1/beta(*alpha)
+    for i in range(0, len(x)):
+        pdf *= x[i]**(alpha[i]-1)
+    return pdf
 
 def objective_function_for_2_by_2(p_test, parameters=exported_parameters, print_update=False):
     # unpack needed values from parameter list
@@ -196,13 +207,8 @@ def analytic_objective(p_test, dis1_prevalences, weights=np.array([0.5, 0.5]), p
 
     return obj_val
 
-def find_critical_cost(parameters=exported_parameters):
-    f_true = parameters["f_true"]
-    optimal_net_benefits = opt_net_benefits(parameters=exported_parameters)
-    
-    return np.dot(f_true, optimal_net_benefits)
-
-def run_experiment(experiment_name, vars_changed, changes_to_try, local_params=exported_parameters, plot_results=True):
+def run_experiment(experiment_name, vars_changed, changes_to_try, local_params=exported_parameters,
+                    plot_results=True, name_override=None):
     # preliminaries to save the results
     cwd = os.getcwd()
     save_to = os.path.join(cwd,"diagnostic_value","longer_runs", experiment_name)
@@ -219,7 +225,7 @@ def run_experiment(experiment_name, vars_changed, changes_to_try, local_params=e
     if len(changes_to_try) > 1:
         combinations = list(itertools.product(*changes_to_try))
     else:
-        combinations = list(itertools.product(changes_to_try[0]))
+        combinations = list(itertools.product(changes_to_try))
     
     failed_saves = 0
     for combo in combinations:
@@ -241,12 +247,17 @@ def run_experiment(experiment_name, vars_changed, changes_to_try, local_params=e
         
         if plot_results:
             plt.plot(p_test_vals, obj_fun_vals)
-        try:
-            np.save(os.path.join(save_to, label), obj_fun_vals)  # save results to view later
-        except:
-            failed_saves += 1
-            np.save(os.path.join(save_to, f"failed_save_{failed_saves}"), obj_fun_vals)
-            print(f"Combination {combo} saved under failed_save_{failed_saves}")
+        
+        # logic to save results, including a manual override of the typical naming scheme
+        if name_override is not None:
+            np.save(os.path.join(save_to, name_override), obj_fun_vals)  # save results to view later
+        else:
+            try:
+                np.save(os.path.join(save_to, label), obj_fun_vals)  # save results to view later
+            except:
+                failed_saves += 1
+                np.save(os.path.join(save_to, f"failed_save_{failed_saves}"), obj_fun_vals)
+                print(f"Combination {combo} saved under failed_save_{failed_saves}")
 
     if plot_results:
         plt.title("Tradeoffs between public and private value of diagnostics")
@@ -297,14 +308,30 @@ def plot_results(experiment_name, varying, constant_vars=[], constant_vals=[], v
     plt.legend(legend_labels)    
     plt.show()
 
-def run_temporal_experiment(experiment_name, prior_sequence, prior_decay_rate=1, local_params=exported_parameters):
+def run_temporal_experiment(experiment_name, prev_sequence, prior_decay_rate=1,
+                             local_params=exported_parameters, set_m=None, set_f_0=None):
+    # will hold final testing frequencies
     optimal_testing_frequencies = []
+    
+    # create local fork of the exported parameters, and allow user to change starting prior
+    # which is useful for resets
     period_params = local_params.copy()
-    for prevalence in prior_sequence:
+    if (set_m is not None) and (set_f_0 is not None):
+        period_params["m"] = set_m
+        period_params["f_0"] = set_f_0
+    
+    # this is only needed to save the results of the priors
+    save_to = os.path.join(os.getcwd(),"diagnostic_value","longer_runs")
+
+    # the above is automatically included in the folder name for the experiment, so only this
+    # needs to be added
+    subpath = os.path.join(experiment_name, f"decay_rate_{prior_decay_rate:.4f}")
+    
+    for i,prevalence in enumerate(prev_sequence):
         f_true = np.array([prevalence,1-prevalence])
         period_params["m"] = period_params["m"]*prior_decay_rate  # to allow physician's to ignore older information
-        subpath = os.path.join(experiment_name, f"decay_rate_{prior_decay_rate:.4f}")
-        optimal_freq = run_experiment(subpath, ["f_true"], [f_true], local_params=period_params.copy(), plot_results=False)[0]
+        optimal_freq = run_experiment(subpath, ["f_true"], [f_true], local_params=period_params.copy(),
+                                       plot_results=False, name_override=f"time_index_{i}_prev_{prevalence}")[0]
 
         # after conducting the experiment for the current period, update the prior for the next period
         alpha = period_params["m"]*period_params["f_0"]+period_params["num_patients"]*optimal_freq*f_true  # update prior
@@ -312,16 +339,77 @@ def run_temporal_experiment(experiment_name, prior_sequence, prior_decay_rate=1,
         period_params["m"] = alpha_magnitude
         period_params["f_0"] = alpha/alpha_magnitude
 
+        np.save(os.path.join(save_to, subpath, f"prior_at_index_{i}"), alpha) # used for restarts
+
         # add results to output
         optimal_testing_frequencies.append(optimal_freq)
 
-    return optimal_testing_frequencies
+    return optimal_testing_frequencies, period_params["m"], period_params["f_0"]
 
+def collect_temporal_results(experiment_name, prev_sequence, prior_decay_rate=1):
+    optimal_testing_results = [None]*len(prev_sequence)
+    prior_parameters = [None]*len(prev_sequence)
+    cwd = os.getcwd()
+    experiment_folder = os.path.join(cwd,"diagnostic_value","longer_runs", experiment_name, f"decay_rate_{prior_decay_rate:.4f}")
+
+    for file in os.listdir(experiment_folder):
+        # find time index (in case there are ordering issues, use regex)
+        index_string_optimal_results = re.findall('time_index_[0123456789]+', file)
+        index_string_prior = re.findall('prior_at_index_[0123456789]+', file)
+        
+        if len(index_string_optimal_results) > 0: 
+            time_index=int(index_string_optimal_results[0].split('_')[-1])
+            obj_fun_vals = np.load(os.path.join(experiment_folder, file))
+            p_vals = np.linspace(0,1,len(obj_fun_vals))
+            optimal_testing_frequency = p_vals[np.argmax(obj_fun_vals)]
+            optimal_testing_results[time_index] = optimal_testing_frequency
+        
+        if len(index_string_prior) > 0:
+            time_index=int(index_string_prior[0].split('_')[-1])
+            alpha = np.load(os.path.join(experiment_folder, file))
+            prior_parameters[time_index] = alpha
+
+    return optimal_testing_results, prior_parameters
+
+def plot_temporal_results(experiment_name, prev_sequence, prior_decay_rate=1, plotting_granularity=10**3):
+    # gather results
+    optimal_testing_freqs, prior_parameters = collect_temporal_results(experiment_name, prev_sequence, prior_decay_rate=prior_decay_rate)
+    
+    fig, (ax1, ax2) = plt.subplots(1, 2)
+    
+    ax1.set_title("Optimal testing frequencies for each time index")
+    ax1.set_xlabel("Time index")
+    ax1.set_ylabel("Optimal testing frequency")
+
+    time_indices = list(range(0, len(prev_sequence)))
+    ax1.plot(time_indices, optimal_testing_freqs, "-o", markerfacecolor="red")
+    
+    ax2.set_title("Policymaker prior over disease prevalences")
+    ax2.set_xlabel("Prevalence of disease one")
+    ax2.set_ylabel("Probability density of policymaker's prior")
+    legend_labels = []
+    
+    dis1_prevs = np.linspace(0, 1, plotting_granularity)
+    
+    for i in range(0, len(prev_sequence)):
+        pdf_vals = [dirichlet_pdf([x, 1-x], prior_parameters[i]) for x in dis1_prevs]
+        ax2.plot(dis1_prevs, pdf_vals)
+        legend_labels.append(f"Index {i}")
+    
+    ax2.legend(legend_labels)
+    plt.show()
+    
 if __name__ == "__main__":
-    # vars_changed = ["f_true"]
-    changes_to_try = [[np.array([0.1,0.9]), np.array([0.3,0.7]), np.array([0.5,0.5]), np.array([0.7,0.3]), np.array([0.9,0.1])]]
-    # run_experiment("revised_distribution_bias", vars_changed, changes_to_try)
-    #choices = [0.8,1.0,1.2,1.4]
-    choices=[f"[{x[0]} {x[1]}]" for x in changes_to_try[0]]
-    labels = [f"{int(100*x[0])}%" for x in changes_to_try[0]]
-    plot_results("revised_distribution_bias","f_true",varying_vals=choices,given_labels=labels)
+    # # vars_changed = ["f_true"]
+    # changes_to_try = [[np.array([0.1,0.9]), np.array([0.3,0.7]), np.array([0.5,0.5]), np.array([0.7,0.3]), np.array([0.9,0.1])]]
+    # # run_experiment("revised_distribution_bias", vars_changed, changes_to_try)
+    # #choices = [0.8,1.0,1.2,1.4]
+    # choices=[f"[{x[0]} {x[1]}]" for x in changes_to_try[0]]
+    # labels = [f"{int(100*x[0])}%" for x in changes_to_try[0]]
+    # plot_results("revised_distribution_bias","f_true",varying_vals=choices,given_labels=labels)
+    experiment_name = "trial_temporal_oscillatory"
+    prev_sequence = [0.9, 0.8, 0.7, 0.8, 0.9]
+    decay_rate = 1
+    # optimal_probs, final_m, final_f_0 = run_temporal_experiment(experiment_name, prev_sequence, prior_decay_rate=decay_rate, local_params=exported_parameters)
+    # optimal_probs = collect_temporal_results(experiment_name, prev_sequence)
+    plot_temporal_results(experiment_name, prev_sequence, prior_decay_rate=decay_rate)
