@@ -81,7 +81,12 @@ def objective_function_for_2_by_2(p_test, parameters=exported_parameters, print_
     # compute thresholds for comparisons
     thresh_num = drug_costs[0]-drug_costs[1]+res_benefit_matrix[1,1]-res_benefit_matrix[0,1]
     thresh_denom = res_benefit_matrix[0,0]+res_benefit_matrix[1,1]-res_benefit_matrix[0,1]-res_benefit_matrix[1,0]
-    threshold = thresh_num/thresh_denom
+    # this handles the edge case where both treatments are precisely equally effective and costly
+    # for all intents and purposes, only the "if" case matters
+    if thresh_denom!=0.0 or thresh_num!=0.0:
+        threshold = thresh_num/thresh_denom
+    else:
+        threshold = 0
 
     # perform Monte-Carlo sampling
     for _ in range(0, diagnostic_realizations):
@@ -225,10 +230,10 @@ def run_experiment(experiment_name, vars_changed, changes_to_try, local_params=e
     if len(changes_to_try) > 1:
         combinations = list(itertools.product(*changes_to_try))
     else:
-        combinations = list(itertools.product(changes_to_try))
+        combinations = list(itertools.product(changes_to_try[0]))
     
     failed_saves = 0
-    for combo in combinations:
+    for k,combo in enumerate(combinations):
         # prepare to save results to specific file and change local variables for experiment
         print(f"Working on combination={combo}")
         label = ""
@@ -250,7 +255,7 @@ def run_experiment(experiment_name, vars_changed, changes_to_try, local_params=e
         
         # logic to save results, including a manual override of the typical naming scheme
         if name_override is not None:
-            np.save(os.path.join(save_to, name_override), obj_fun_vals)  # save results to view later
+            np.save(os.path.join(save_to, name_override[k]), obj_fun_vals)  # save results to view later
         else:
             try:
                 np.save(os.path.join(save_to, label), obj_fun_vals)  # save results to view later
@@ -266,11 +271,11 @@ def run_experiment(experiment_name, vars_changed, changes_to_try, local_params=e
         plt.legend([f"{combo}" for combo in combinations])
         plt.show()
     
-    argmax_index = int(np.argmax(obj_fun_vals))
     return optimal_testing_frequencies
 
 # could probably rewrite this with regex if needed
-def plot_results(experiment_name, varying, constant_vars=[], constant_vals=[], varying_vals=None, given_labels=None):
+def plot_results(experiment_name, varying, constant_vars=[], constant_vals=[], varying_vals=None,
+                  given_labels=None, p_range=[0, 1], legend_title="Legend"):
     cwd = os.getcwd()
     prefix_folder = os.path.join(cwd,"diagnostic_value","longer_runs",experiment_name)
     
@@ -295,17 +300,26 @@ def plot_results(experiment_name, varying, constant_vars=[], constant_vals=[], v
         if include:
             obj_vals = np.load(os.path.join(prefix_folder,result))
             p_vals = np.linspace(0,1,len(obj_vals))
+            min_include = (p_vals >= p_range[0])
+            max_include = (p_vals <= p_range[1])
+            include_bools = min_include*max_include
             argmax_index = int(np.argmax(obj_vals))
-            plt.plot(p_vals, obj_vals)
-            plt.scatter(p_vals[argmax_index], obj_vals[argmax_index], color="r", label="_nolegend_")
+            plt.plot(p_vals[include_bools], obj_vals[include_bools])
+            
+            if p_range[0] <= p_vals[argmax_index] <= p_range[1]:
+                plt.scatter(p_vals[argmax_index], obj_vals[argmax_index], color="r", label="_nolegend_")
             
             if given_labels is None:
                 numpy_starts = result.find(".npy")  # used to generate legend label
                 legend_labels.append(result[:numpy_starts])
                 
-    plt.xlabel("probability of diagnostic")
+    # Add maximum marker to legend
+    plt.scatter([],[],marker='o',color='r')
+    legend_labels.append("optimum")
+    
+    plt.xlabel("fraction of patients given diagnostics")
     plt.ylabel("expected net benefit per patient ($)")
-    plt.legend(legend_labels)    
+    plt.legend(legend_labels, title=legend_title)    
     plt.show()
 
 def run_temporal_experiment(experiment_name, prev_sequence, prior_decay_rate=1,
@@ -375,41 +389,50 @@ def plot_temporal_results(experiment_name, prev_sequence, prior_decay_rate=1, pl
     # gather results
     optimal_testing_freqs, prior_parameters = collect_temporal_results(experiment_name, prev_sequence, prior_decay_rate=prior_decay_rate)
     
-    fig, (ax1, ax2) = plt.subplots(1, 2)
+    fig, (ax1, ax2) = plt.subplots(2, 1)
     
-    ax1.set_title("Optimal testing frequencies for each time index")
-    ax1.set_xlabel("Time index")
-    ax1.set_ylabel("Optimal testing frequency")
+    ax1.set_title("Optimal fraction of patients to test over time")
+    ax1.set_ylabel("Optimal testing fraction")
 
     time_indices = list(range(0, len(prev_sequence)))
-    ax1.plot(time_indices, optimal_testing_freqs, "-o", markerfacecolor="red")
+    ax1.scatter(time_indices, optimal_testing_freqs, c="red")
     
-    ax2.set_title("Policymaker prior over disease prevalences")
-    ax2.set_xlabel("Prevalence of disease one")
-    ax2.set_ylabel("Probability density of policymaker's prior")
-    legend_labels = []
-    
-    dis1_prevs = np.linspace(0, 1, plotting_granularity)
+    ax2.set_title("Planner estimates of disease one prevalence vs. true prevalence")
+    ax2.set_xlabel("Time index")
+    ax2.set_ylabel("Disease one prevalence")
+    mean_dist = []
     
     for i in range(0, len(prev_sequence)):
-        pdf_vals = [dirichlet_pdf([x, 1-x], prior_parameters[i]) for x in dis1_prevs]
-        ax2.plot(dis1_prevs, pdf_vals)
-        legend_labels.append(f"Index {i}")
+        mean_dist.append(prior_parameters[i][0]/np.sum(prior_parameters[i]))
     
-    ax2.legend(legend_labels)
+    ax2.scatter(time_indices, mean_dist, c="red")
+    ax2.scatter(time_indices, prev_sequence, c="black", marker="x")
+    ax2.legend(["Planner estimate", "True prevalence"])
+
+    plt.tight_layout()
     plt.show()
     
 if __name__ == "__main__":
-    # # vars_changed = ["f_true"]
-    # changes_to_try = [[np.array([0.1,0.9]), np.array([0.3,0.7]), np.array([0.5,0.5]), np.array([0.7,0.3]), np.array([0.9,0.1])]]
-    # # run_experiment("revised_distribution_bias", vars_changed, changes_to_try)
-    # #choices = [0.8,1.0,1.2,1.4]
-    # choices=[f"[{x[0]} {x[1]}]" for x in changes_to_try[0]]
-    # labels = [f"{int(100*x[0])}%" for x in changes_to_try[0]]
-    # plot_results("revised_distribution_bias","f_true",varying_vals=choices,given_labels=labels)
-    experiment_name = "trial_temporal_oscillatory"
-    prev_sequence = [0.9, 0.8, 0.7, 0.8, 0.9]
-    decay_rate = 1
-    # optimal_probs, final_m, final_f_0 = run_temporal_experiment(experiment_name, prev_sequence, prior_decay_rate=decay_rate, local_params=exported_parameters)
-    # optimal_probs = collect_temporal_results(experiment_name, prev_sequence)
-    plot_temporal_results(experiment_name, prev_sequence, prior_decay_rate=decay_rate)
+    # prev_seq = [0.9, 0.87, 0.83, 0.8, 0.77, 0.73, 0.7, 0.73, 0.77, 0.8, 0.83, 0.87, 0.9]
+    # plot_temporal_results("trial_temporal_oscillatory_smaller_gaps", prev_seq)
+    
+    experiment_name = "revised_cost_monospectral_treatments"
+    varying = "cost_test"
+    experiment_values = [np.array([0.1, 0.9]), np.array([0.3, 0.7]), np.array([0.5, 0.5]),
+                          np.array([0.7, 0.3]), np.array([0.9, 0.1])]
+    chosen_values = [1.4, 2.0, 2.6, 3.2]
+    # exported_parameters["resistance"] = np.array([[140/189, 1],[1, 39/57]])
+    # exported_parameters["cost_test"] = 3.6
+    labels = [f"{int(x[0]*100)}%" for x in experiment_values]
+    # run_experiment(experiment_name, [varying], [experiment_values], plot_results=False)
+    plot_results(experiment_name, varying, varying_vals=chosen_values, given_labels=labels,
+                  legend_title="Disease one prevalence")
+    
+    # # interpolated values for resistance
+    # t_vals = ["0.000", "0.02", "0.04", "0.06"]
+    # #resistance_candidates = [t*base_res+(1-t)*same_resistance for t in t_vals]
+    # t_labels = [f"{int(float(x)*100)}% difference" for x in t_vals]
+    # t_labels[0] = "treatments are equivalent"
+    # plot_results("equalized_effectiveness","t_val",varying_vals=t_vals,given_labels=t_labels,
+    #              p_range=[0, 0.2],legend_title="Similarity of resistance profiles")
+    
