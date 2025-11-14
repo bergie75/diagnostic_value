@@ -8,6 +8,7 @@ import os
 import itertools
 from multiprocessing import Pool
 import re
+import string
 
 # the generator used for our experiments, can set a seed for consistency
 rng = np.random.default_rng()
@@ -376,6 +377,7 @@ def run_temporal_experiment(experiment_name, prev_sequence, prior_decay_rate=1,
         # add results to output
         optimal_testing_frequencies.append(optimal_freq)
 
+    np.save(os.path.join(save_to, subpath, "optimal_sampling_rates"), np.array(optimal_testing_frequencies))
     return optimal_testing_frequencies, period_params["m"], period_params["f_0"]
 
 def collect_temporal_results(experiment_name, prev_sequence, prior_decay_rate=1):
@@ -487,15 +489,108 @@ def public_private_breakdown(experiment_name, varying, constant_vars=[], constan
     plt.legend()
     plt.show()
 
+def augmented_plot(experiment_name, varying, constant_vars=[], constant_vals=[], varying_vals=None,
+                  given_labels=None, p_range=[0, 1], legend_title="Legend",
+                  bar_title="", bar_xlabel="", line_title=""):
+    cwd = os.getcwd()
+    prefix_folder = os.path.join(cwd,"diagnostic_value","longer_runs",experiment_name)
+    
+    # filter the directory to find relevant files
+    filters = [f"{constant_vars[i]}_{constant_vals[i]}" for i in range(0,len(constant_vars))]
+    # only allow files which mention the intended values to plot, use all if unspecified
+    if varying_vals is not None:
+        for value in varying_vals:
+            filters.append(f"{varying}_{value}")
+    else:
+        filters.append(varying)
+    
+    if given_labels is None:
+        legend_labels = []
+    else:
+        legend_labels = given_labels
+    
+    found_results = {}  # an accumulator for the bar chart, has to be drawn later for auto-spacing
+    # create subplots for figure
+    f, (ax1, ax2) = plt.subplots(1, 2, sharey=True)
+
+    for result in os.listdir(prefix_folder):
+        include = False
+        for filter in filters:
+            include = (include or (result.find(filter) != -1))
+        if include:
+            obj_vals = np.load(os.path.join(prefix_folder,result))
+            p_vals = np.linspace(0,1,len(obj_vals))
+            min_include = (p_vals >= p_range[0])
+            max_include = (p_vals <= p_range[1])
+            include_bools = min_include*max_include
+            argmax_index = int(np.argmax(obj_vals))
+            ax1.plot(p_vals[include_bools], obj_vals[include_bools])
+            
+            if p_range[0] <= p_vals[argmax_index] <= p_range[1]:
+                ax1.scatter(p_vals[argmax_index], obj_vals[argmax_index], color="r", label="_nolegend_")
+            
+            if given_labels is None:
+                numpy_starts = result.find(".npy")  # used to generate legend label
+                legend_labels.append(result[:numpy_starts])
+            
+            # need to break filter apart again to automatically alter variables used
+            decimal_index = result.find(".")
+            cutoff = result[decimal_index+1:].find(".")+decimal_index+1
+            variable_value = result[decimal_index-1:cutoff]
+            variable_name = result[:decimal_index-2]
+            # compute public-private split
+            private_val = private_term_only(p_vals[argmax_index], mod_vars={variable_name: float(variable_value)})
+            public_val = obj_vals[argmax_index] - private_val
+            found_results[f"{variable_name}: {variable_value}"] = [public_val, private_val]
+
+    # use accumulated results to plot a graph
+    num_results = len(found_results.keys())
+    area_width = 1/(1+num_results)
+    plot_width = 0.8*area_width/2
+    plot_spots = [i*area_width for i in range(1,num_results+1)]
+
+    for i,key in enumerate(found_results.keys()):
+        if i==0:
+            legend_val = ["Public value", "Private value"]
+        else:
+            legend_val = None
+        
+        ax2.bar([plot_spots[i]-plot_width/2, plot_spots[i]+plot_width/2], found_results[key],
+                 width=plot_width, color=["tab:red", "tab:blue"], label=legend_val)
+    # use filters unless prettier labels are supplied
+    if given_labels is None:
+        given_labels = found_results.keys()
+
+    ax2.set_xticks(plot_spots, labels=given_labels)
+    ax2.set_xlabel(bar_xlabel)
+    ax2.set_title(bar_title)
+    ax2.text(-0.1, 1.05, string.ascii_uppercase[1], transform=ax2.transAxes, 
+            size=20, weight='bold')
+    ax2.legend()
+    
+    # do this second because legend labels are being changed by reference:
+    # Add maximum marker to legend
+    ax1.scatter([],[],marker='o',color='r')
+    legend_labels.append("optimum")
+
+    ax1.set_xlabel("fraction of patients given diagnostics")
+    ax1.set_ylabel("expected net benefit per patient ($)")
+    ax1.set_title(line_title)
+    ax1.text(-0.1, 1.05, string.ascii_uppercase[0], transform=ax1.transAxes, 
+            size=20, weight='bold')
+    ax1.legend(legend_labels, title=legend_title)
+
+    plt.show()
+
 if __name__ == "__main__":
-    # prev_seq = [0.9, 0.87, 0.83, 0.8, 0.77, 0.73, 0.7, 0.73, 0.77, 0.8, 0.83, 0.87, 0.9]
-    # plot_temporal_results("trial_temporal_oscillatory_smaller_gaps", prev_seq)
+    prev_seq = [0.9, 0.84, 0.78, 0.72, 0.66, 0.6, 0.54, 0.6, 0.66, 0.72, 0.78, 0.84, 0.9]
+    plot_temporal_results("faster_prevalence_variation_temporal", prev_seq)
     
     experiment_name = "revised_cost_monospectral_treatments"
     varying = "cost_test"
     # experiment_values = [np.array([0.1, 0.9]), np.array([0.3, 0.7]), np.array([0.5, 0.5]),
     #                       np.array([0.7, 0.3]), np.array([0.9, 0.1])]
-    chosen_values = [2.0, 2.2, 2.4, 2.6]
+    chosen_values = [1.4, 2.0, 2.6, 3.2]
     exported_parameters["resistance"] = np.array([[140/189, 1],[1, 39/57]])
     # exported_parameters["cost_test"] = 3.6
     labels = [f"${x:0.2f}" for x in chosen_values]
@@ -505,8 +600,10 @@ if __name__ == "__main__":
                              #labels=labels, title=title, xlabel=xlabel)
 
     # run_experiment(experiment_name, [varying], [chosen_values], use_mc=False)
-    plot_results(experiment_name, varying, varying_vals=chosen_values, given_labels=labels,
-                   legend_title="Disease one prevalence")
+    #plot_results(experiment_name, varying, varying_vals=chosen_values, given_labels=labels,
+                   #legend_title="Disease one prevalence")
+    # augmented_plot(experiment_name, varying, varying_vals=chosen_values, given_labels=labels,
+    #                legend_title="Disease one prevalence", bar_xlabel=xlabel)
     
     # # interpolated values for resistance
     # t_vals = ["0.000", "0.02", "0.04", "0.06"]
