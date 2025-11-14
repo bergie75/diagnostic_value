@@ -241,12 +241,15 @@ def run_experiment(experiment_name, vars_changed, changes_to_try, local_params=e
     num_patients = exported_parameters["num_patients"]  # a constant from our configuration file
     p_test_vals = np.array(range(0, num_patients+1))/num_patients
 
-    # generate tests
+    # generate tests, handling issues when only one variable changes
+    # this depends on whether that one variable is vector-valued
     if len(changes_to_try) > 1:
         combinations = list(itertools.product(*changes_to_try))
+    elif len(changes_to_try[0] > 1):
+        combinations = list(itertools.product(changes_to_try))
     else:
         combinations = list(itertools.product(changes_to_try[0]))
-    
+
     failed_saves = 0
     for k,combo in enumerate(combinations):
         # prepare to save results to specific file and change local variables for experiment
