@@ -163,6 +163,21 @@ def objective_function_for_2_by_2_parallel(p_test, parameters=exported_parameter
 
     return obj_value
 
+def private_term_only(p_test, parameters=exported_parameters, mod_vars={}):
+    # allow for modifications, key for reloading past experiments I ran without this breakdown in mind
+    for var_name in mod_vars.keys():
+        parameters[var_name] = mod_vars[var_name]
+    
+    # unpack needed values from parameter list
+    cost_test = parameters["cost_test"]
+    f_true = parameters["f_true"]
+    
+    # compute useful intermediate quantities with parameter list
+    optimal_net_benefits = opt_net_benefits(parameters)
+    testing_net_benefit = np.dot(f_true, optimal_net_benefits)-cost_test
+
+    return p_test*testing_net_benefit
+
 # the objective function for the restricted scenario when a physician only considers two possible
 # pathogen distributions. dis1_prevalences holds the amount of pathogen 1 for each distribution
 def analytic_objective(p_test, dis1_prevalences, weights=np.array([0.5, 0.5]), parameters=exported_parameters):
@@ -213,7 +228,7 @@ def analytic_objective(p_test, dis1_prevalences, weights=np.array([0.5, 0.5]), p
     return obj_val
 
 def run_experiment(experiment_name, vars_changed, changes_to_try, local_params=exported_parameters,
-                    plot_results=True, name_override=None):
+                    plot_results=False, name_override=None):
     # preliminaries to save the results
     cwd = os.getcwd()
     save_to = os.path.join(cwd,"diagnostic_value","longer_runs", experiment_name)
@@ -245,7 +260,7 @@ def run_experiment(experiment_name, vars_changed, changes_to_try, local_params=e
         label = label[:-1]  # strip trailing underscore
 
         # carry out experiment and add results to plot
-        obj_fun_vals = np.array([objective_function_for_2_by_2(p_test, parameters=local_params) for p_test in p_test_vals])
+        obj_fun_vals = np.array([objective_function_for_2_by_2(p_test, parameters=local_params) for p_test in p_test_vals]) 
         argmax_index = int(np.argmax(obj_fun_vals))
         optimal_test_frequency = p_test_vals[argmax_index]
         optimal_testing_frequencies.append(optimal_test_frequency)
@@ -412,21 +427,83 @@ def plot_temporal_results(experiment_name, prev_sequence, prior_decay_rate=1, pl
     plt.tight_layout()
     plt.show()
     
+def public_private_breakdown(experiment_name, varying, constant_vars=[], constant_vals=[], varying_vals=None,
+                             labels=None, title="", xlabel=""):
+    cwd = os.getcwd()
+    prefix_folder = os.path.join(cwd,"diagnostic_value","longer_runs",experiment_name)
+    
+    # filter the directory to find relevant files
+    filters = [f"{constant_vars[i]}_{constant_vals[i]}" for i in range(0, len(constant_vars))]
+    # only allow files which mention the intended values to plot, use all if unspecified
+    if varying_vals is not None:
+        for value in varying_vals:
+            filters.append(f"{varying}_{value}")
+    else:
+        filters.append(varying)
+    
+    found_results = {}
+    for result in os.listdir(prefix_folder):
+        include = False
+        for filter in filters:
+            include = (include or (result.find(filter) != -1))
+        if include:
+            # need to break filter apart again to automatically alter variables used
+            decimal_index = result.find(".")
+            cutoff = result[decimal_index+1:].find(".")+decimal_index+1
+            variable_value = result[decimal_index-1:cutoff]
+            variable_name = result[:decimal_index-2]
+            # compute public-private split
+            obj_vals = np.load(os.path.join(prefix_folder,result))
+            p_vals = np.linspace(0,1,len(obj_vals))
+            argmax_index = int(np.argmax(obj_vals))
+            private_val = private_term_only(p_vals[argmax_index], mod_vars={variable_name: float(variable_value)})
+            public_val = obj_vals[argmax_index] - private_val
+            found_results[f"{variable_name}: {variable_value}"] = [public_val, private_val]
+    
+    # use accumulated results to plot a graph
+    num_results = len(found_results.keys())
+    area_width = 1/(1+num_results)
+    plot_width = 0.8*area_width/2
+    plot_spots = [i*area_width for i in range(1,num_results+1)]
+
+    for i,key in enumerate(found_results.keys()):
+        if i==0:
+            legend_val = ["Public value", "Private value"]
+        else:
+            legend_val = None
+        
+        plt.bar([plot_spots[i]-plot_width/2, plot_spots[i]+plot_width/2], found_results[key],
+                 width=plot_width, color=["tab:red", "tab:blue"], label=legend_val)
+    # use filters unless prettier labels are supplied
+    if labels is None:
+        labels = found_results.keys()
+    plt.xticks(plot_spots, labels=labels)
+    plt.ylabel("Net benefit per patient ($)")
+    plt.xlabel(xlabel)
+    plt.title(title)
+    plt.legend()
+    plt.show()
+
 if __name__ == "__main__":
     # prev_seq = [0.9, 0.87, 0.83, 0.8, 0.77, 0.73, 0.7, 0.73, 0.77, 0.8, 0.83, 0.87, 0.9]
     # plot_temporal_results("trial_temporal_oscillatory_smaller_gaps", prev_seq)
     
     experiment_name = "revised_cost_monospectral_treatments"
     varying = "cost_test"
-    experiment_values = [np.array([0.1, 0.9]), np.array([0.3, 0.7]), np.array([0.5, 0.5]),
-                          np.array([0.7, 0.3]), np.array([0.9, 0.1])]
-    chosen_values = [1.4, 2.0, 2.6, 3.2]
-    # exported_parameters["resistance"] = np.array([[140/189, 1],[1, 39/57]])
+    # experiment_values = [np.array([0.1, 0.9]), np.array([0.3, 0.7]), np.array([0.5, 0.5]),
+    #                       np.array([0.7, 0.3]), np.array([0.9, 0.1])]
+    chosen_values = [2.0, 2.2, 2.4, 2.6]
+    exported_parameters["resistance"] = np.array([[140/189, 1],[1, 39/57]])
     # exported_parameters["cost_test"] = 3.6
-    labels = [f"{int(x[0]*100)}%" for x in experiment_values]
-    # run_experiment(experiment_name, [varying], [experiment_values], plot_results=False)
+    labels = [f"${x:0.2f}" for x in chosen_values]
+    title = "Public and private value with varying diagnostic cost"
+    xlabel = "cost of diagnostic test"
+    #public_private_breakdown(experiment_name, varying, varying_vals=chosen_values, 
+                             #labels=labels, title=title, xlabel=xlabel)
+
+    # run_experiment(experiment_name, [varying], [chosen_values], use_mc=False)
     plot_results(experiment_name, varying, varying_vals=chosen_values, given_labels=labels,
-                  legend_title="Disease one prevalence")
+                   legend_title="Disease one prevalence")
     
     # # interpolated values for resistance
     # t_vals = ["0.000", "0.02", "0.04", "0.06"]
