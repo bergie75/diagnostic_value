@@ -378,38 +378,37 @@ def run_temporal_experiment(experiment_name, prev_sequence, prior_decay_rate=1,
         optimal_testing_frequencies.append(optimal_freq)
 
     np.save(os.path.join(save_to, subpath, "optimal_sampling_rates"), np.array(optimal_testing_frequencies))
+    np.save(os.path.join(save_to, subpath, "prev_sequence"), np.array(prev_sequence))
     return optimal_testing_frequencies, period_params["m"], period_params["f_0"]
 
-def collect_temporal_results(experiment_name, prev_sequence, prior_decay_rate=1):
+def collect_temporal_results(experiment_name, prev_sequence=None, prior_decay_rate=1):
     optimal_testing_results = [None]*len(prev_sequence)
     prior_parameters = [None]*len(prev_sequence)
     cwd = os.getcwd()
     experiment_folder = os.path.join(cwd,"diagnostic_value","longer_runs", experiment_name, f"decay_rate_{prior_decay_rate:.4f}")
 
+    optimal_testing_results = np.load(os.path.join(experiment_folder, "optimal_sampling_rates.npy"))
+
+    # load saved prev sequence if available
+    if prev_sequence is None:
+        prev_sequence = np.load(experiment_folder, "prev_sequence.npy")
+    
     for file in os.listdir(experiment_folder):
         # find time index (in case there are ordering issues, use regex)
-        index_string_optimal_results = re.findall('time_index_[0123456789]+', file)
         index_string_prior = re.findall('prior_at_index_[0123456789]+', file)
-        
-        if len(index_string_optimal_results) > 0: 
-            time_index=int(index_string_optimal_results[0].split('_')[-1])
-            obj_fun_vals = np.load(os.path.join(experiment_folder, file))
-            p_vals = np.linspace(0,1,len(obj_fun_vals))
-            optimal_testing_frequency = p_vals[np.argmax(obj_fun_vals)]
-            optimal_testing_results[time_index] = optimal_testing_frequency
         
         if len(index_string_prior) > 0:
             time_index=int(index_string_prior[0].split('_')[-1])
             alpha = np.load(os.path.join(experiment_folder, file))
             prior_parameters[time_index] = alpha
 
-    return optimal_testing_results, prior_parameters
+    return optimal_testing_results, prior_parameters, prev_sequence
 
-def plot_temporal_results(experiment_name, prev_sequence, prior_decay_rate=1, plotting_granularity=10**3):
+def plot_temporal_results(experiment_name, prev_sequence=None, prior_decay_rate=1, plotting_granularity=10**3):
     # gather results
-    optimal_testing_freqs, prior_parameters = collect_temporal_results(experiment_name, prev_sequence, prior_decay_rate=prior_decay_rate)
+    optimal_testing_freqs, prior_parameters, prev_sequence = collect_temporal_results(experiment_name, prev_sequence, prior_decay_rate=prior_decay_rate)
     
-    fig, (ax1, ax2) = plt.subplots(2, 1)
+    _, (ax1, ax2) = plt.subplots(2, 1)
     
     ax1.set_title("Optimal fraction of patients to test over time")
     ax1.set_ylabel("Optimal testing fraction")
@@ -584,7 +583,7 @@ def augmented_plot(experiment_name, varying, constant_vars=[], constant_vals=[],
 
 if __name__ == "__main__":
     prev_seq = [0.9, 0.84, 0.78, 0.72, 0.66, 0.6, 0.54, 0.6, 0.66, 0.72, 0.78, 0.84, 0.9]
-    plot_temporal_results("faster_prevalence_variation_temporal", prev_seq)
+    plot_temporal_results("faster_prevalence_variation_temporal_decay", prev_seq, prior_decay_rate=0.0050)
     
     experiment_name = "revised_cost_monospectral_treatments"
     varying = "cost_test"
