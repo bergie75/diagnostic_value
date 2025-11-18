@@ -1,10 +1,12 @@
 # math and user-defined
 import numpy as np
+from math import floor, ceil
 from scipy.special import betainc, beta
 import matplotlib.pyplot as plt
 from example_with_maximum import exported_parameters
 # logistical
 import os
+import copy
 import itertools
 from multiprocessing import Pool
 import re
@@ -111,6 +113,80 @@ def objective_function_for_2_by_2(p_test, parameters=exported_parameters, print_
         print(f"Completed calculation for {p_test}")
 
     return obj_value
+
+def obj_fun_with_wastewater(p_test, parameters=exported_parameters,
+                  use_wes=True, amb_conf=0.1, amb_mean=[0.5, 0.5]):
+    obj_fun = 0
+    for _ in range(0, parameters["prior_update_realizations"]):
+        local_params = copy.deepcopy(parameters)
+        # alter the planner's prior according to wes output (or lack thereof)
+        if use_wes:
+            wes_sample = rng.dirichlet(local_params["wes_prior"])
+            local_params["m"] = np.sum(wes_sample)
+            local_params["f_0"] = wes_sample/local_params["m"]
+        else:
+            local_params["m"] = amb_conf
+            local_params["f_0"] = amb_mean
+        
+        obj_fun = objective_function_for_2_by_2(p_test, parameters=local_params)
+    obj_fun /= parameters["prior_update_realizations"]
+    
+    return obj_fun
+
+def golden_search(min_patients, max_patients, parameters=exported_parameters):
+    invphi=0.618  # golden ratio, used for optimal selection of intervals
+    num_patients = exported_parameters["num_patients"]
+    
+    to_maximize = lambda p: obj_fun_with_wastewater(p, use_wes=True, parameters=parameters)
+    old_min = -np.inf
+    old_max = np.inf
+
+    while (max_patients - min_patients > 1) and ((min_patients-old_min>0) or (old_max-max_patients>0)):
+        old_min = min_patients
+        old_max = max_patients
+        print(f"Current bracket: [{min_patients, max_patients}]")
+        interior1 = floor(max_patients - (max_patients-min_patients)*invphi)
+        interior2 = ceil(min_patients + (max_patients-min_patients)*invphi)
+        f_at_1 = to_maximize(interior1)
+        f_at_2 = to_maximize(interior2)
+        if f_at_1 > f_at_2:
+            max_patients = interior2
+        else:
+            min_patients = interior1
+    
+    return (min_patients + max_patients)/(2*num_patients)
+
+def secant_search(starting_patients, min_patients, max_patients, parameters=exported_parameters,
+                  stepsize=0.01, error_tol=10**(-6), step_decay=0.99):
+    
+    num_patients = exported_parameters["num_patients"]
+    to_maximize = lambda p: obj_fun_with_wastewater(p, use_wes=True, parameters=parameters)
+    
+    current_patients = starting_patients
+    current_val = to_maximize(starting_patients/num_patients)
+    
+    old_patients = np.inf
+    old_val = -np.inf
+
+    while (np.abs(current_patients-old_patients) > 1) and np.abs(current_val-old_val) > error_tol:
+        print(f"Current optimal estimate: {current_patients}")
+        old_patients = current_patients
+        old_val = current_val
+
+        if current_patients == num_patients:
+            neighboring_patients = current_patients - 1
+        else:
+            neighboring_patients = current_patients + 1
+        
+        neighboring_func_value = to_maximize(neighboring_patients/num_patients)
+        secant = num_patients*(neighboring_func_value - current_val)/(neighboring_patients - current_patients)
+
+        current_patients += round(stepsize*secant), max_patients
+        current_patients = min(max(min_patients, current_patients), max_patients)
+        stepsize *= step_decay
+        current_val = to_maximize(current_patients/num_patients)
+    
+    return current_patients/num_patients
 
 def objective_function_for_2_by_2_parallel(p_test, parameters=exported_parameters, print_update=False):
     # unpack needed values from parameter list
@@ -341,6 +417,10 @@ def plot_results(experiment_name, varying, constant_vars=[], constant_vals=[], v
     plt.legend(legend_labels, title=legend_title)    
     plt.show()
 
+def run_wes_prior_experiment(experiment_name, 
+                             ambivalence_confidence_level=0.1, ambivalence_mean=np.array([0.5,0.5])):
+    pass
+
 def run_temporal_experiment(experiment_name, prev_sequence, prior_decay_rate=1,
                              local_params=exported_parameters, set_m=None, set_f_0=None):
     # will hold final testing frequencies
@@ -382,16 +462,15 @@ def run_temporal_experiment(experiment_name, prev_sequence, prior_decay_rate=1,
     return optimal_testing_frequencies, period_params["m"], period_params["f_0"]
 
 def collect_temporal_results(experiment_name, prev_sequence=None, prior_decay_rate=1):
-    optimal_testing_results = [None]*len(prev_sequence)
-    prior_parameters = [None]*len(prev_sequence)
     cwd = os.getcwd()
     experiment_folder = os.path.join(cwd,"diagnostic_value","longer_runs", experiment_name, f"decay_rate_{prior_decay_rate:.4f}")
 
     optimal_testing_results = np.load(os.path.join(experiment_folder, "optimal_sampling_rates.npy"))
+    prior_parameters = [None]*len(optimal_testing_results)
 
     # load saved prev sequence if available
     if prev_sequence is None:
-        prev_sequence = np.load(experiment_folder, "prev_sequence.npy")
+        prev_sequence = np.load(os.path.join(experiment_folder, "prev_sequence.npy"))
     
     for file in os.listdir(experiment_folder):
         # find time index (in case there are ordering issues, use regex)
@@ -582,9 +661,8 @@ def augmented_plot(experiment_name, varying, constant_vars=[], constant_vals=[],
     plt.show()
 
 if __name__ == "__main__":
-    prev_seq = [0.9, 0.84, 0.78, 0.72, 0.66, 0.6, 0.54, 0.6, 0.66, 0.72, 0.78, 0.84, 0.9]
-    plot_temporal_results("faster_prevalence_variation_temporal_decay", prev_seq, prior_decay_rate=0.0050)
-    
+    #prev_seq = [0.9, 0.84, 0.78, 0.72, 0.66, 0.6, 0.54, 0.6, 0.66, 0.72, 0.78, 0.84, 0.9]
+    plot_temporal_results("faster_prevalence_variation_temporal_old_resistance")
     experiment_name = "revised_cost_monospectral_treatments"
     varying = "cost_test"
     # experiment_values = [np.array([0.1, 0.9]), np.array([0.3, 0.7]), np.array([0.5, 0.5]),
