@@ -25,6 +25,7 @@ p_ignore = 0.0 # probability that a test is ignored after being ordered
 f_true = np.array([0.9,0.1])  # true species breakdown
 m = 10
 f_0 = np.array([0.5, 0.5])
+wes_prior = 2*np.array([0.7, 0.3])
 
 # ____________________________________________________________________________
 # COSTS AND BENEFITS
@@ -52,11 +53,11 @@ exported_parameters_list = [num_patients, num_treatments, num_pathogens,
                        diagnostic_realizations, prior_update_realizations,
                        f_true, m, f_0,
                        drug_costs, cost_per_qaly, qaly_if_susc, qaly_if_res, cost_res, cost_test,
-                       resistance, p_ignore]
+                       resistance, p_ignore, wes_prior]
 
 par_names = ["num_patients", "num_treatments", "num_pathogens",
               "diagnostic_realizations", "prior_update_realizations",
                 "f_true", "m", "f_0", "drug_costs", "cost_per_qaly", "qaly_if_susc", "qaly_if_res", "cost_res", "cost_test",
-                  "resistance", "p_ignore"]
+                  "resistance", "p_ignore", "wes_prior"]
 
 exported_parameters = dict(zip(par_names, exported_parameters_list))
