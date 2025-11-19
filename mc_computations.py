@@ -163,13 +163,14 @@ def secant_search(starting_patients, min_patients, max_patients, parameters=expo
     to_maximize = lambda p: obj_fun_with_wastewater(p, use_wes=True, parameters=parameters)
     
     current_patients = starting_patients
+    print("Initializing function value ...")
     current_val = to_maximize(starting_patients/num_patients)
+    print("Initialization complete, beginning run")
     
     old_patients = np.inf
     old_val = -np.inf
 
     while (np.abs(current_patients-old_patients) > 1) and np.abs(current_val-old_val) > error_tol:
-        print(f"Current optimal estimate: {current_patients}")
         old_patients = current_patients
         old_val = current_val
 
@@ -180,11 +181,14 @@ def secant_search(starting_patients, min_patients, max_patients, parameters=expo
         
         neighboring_func_value = to_maximize(neighboring_patients/num_patients)
         secant = num_patients*(neighboring_func_value - current_val)/(neighboring_patients - current_patients)
+        print(f"Secant = {secant}")
 
-        current_patients += round(stepsize*secant), max_patients
+        current_patients += round(stepsize*secant*num_patients)
         current_patients = min(max(min_patients, current_patients), max_patients)
         stepsize *= step_decay
         current_val = to_maximize(current_patients/num_patients)
+
+        print(f"Current optimal estimate: {current_patients}")
     
     return current_patients/num_patients
 
@@ -662,7 +666,7 @@ def augmented_plot(experiment_name, varying, constant_vars=[], constant_vals=[],
 
 if __name__ == "__main__":
     #prev_seq = [0.9, 0.84, 0.78, 0.72, 0.66, 0.6, 0.54, 0.6, 0.66, 0.72, 0.78, 0.84, 0.9]
-    plot_temporal_results("faster_prevalence_variation_temporal_old_resistance")
+    plot_temporal_results("slower_prevalence_variation_temporal_old_resistance", prior_decay_rate=0.0050)
     experiment_name = "revised_cost_monospectral_treatments"
     varying = "cost_test"
     # experiment_values = [np.array([0.1, 0.9]), np.array([0.3, 0.7]), np.array([0.5, 0.5]),
