@@ -475,8 +475,8 @@ def run_optimal_average_experiment(experiment_name, prev_sequence, prior_decay_r
     # needs to be added
     subpath = os.path.join("average_optimum_runs",experiment_name,f"decay_rate_{prior_decay_rate:.4f}")
 
-    if not os.path.exists(subpath):
-        os.makedirs(subpath)
+    if not os.path.exists(os.path.join(save_to, subpath)):
+        os.makedirs(os.path.join(save_to, subpath))
 
     # find all testing frequencies
     num_patients = local_params["num_patients"]
