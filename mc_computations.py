@@ -354,7 +354,7 @@ def run_experiment(experiment_name, vars_changed, changes_to_try, local_params=e
         
         # logic to save results, including a manual override of the typical naming scheme
         if name_override is not None:
-            np.save(os.path.join(save_to, name_override[k]), obj_fun_vals)  # save results to view later
+            np.save(os.path.join(save_to, f"{name_override}_{k}"), obj_fun_vals)  # save results to view later
         else:
             try:
                 np.save(os.path.join(save_to, label), obj_fun_vals)  # save results to view later
@@ -465,12 +465,58 @@ def run_temporal_experiment(experiment_name, prev_sequence, prior_decay_rate=1,
     np.save(os.path.join(save_to, subpath, "prev_sequence"), np.array(prev_sequence))
     return optimal_testing_frequencies, period_params["m"], period_params["f_0"]
 
+def run_optimal_average_experiment(experiment_name, prev_sequence, prior_decay_rate=1,
+                             local_params=exported_parameters):
+    
+    # this is only needed to save the results of the priors
+    save_to = os.path.join(os.getcwd(),"diagnostic_value","longer_runs")
+
+    # the above is automatically included in the folder name for the experiment, so only this
+    # needs to be added
+    subpath = os.path.join("average_optimum_runs",experiment_name,f"decay_rate_{prior_decay_rate:.4f}")
+
+    if not os.path.exists(subpath):
+        os.makedirs(subpath)
+
+    # find all testing frequencies
+    num_patients = local_params["num_patients"]
+    testing_frequencies = np.linspace(0,1,num_patients+1)
+    
+    # will hold average objective function values
+    objective_function_values = np.zeros(num_patients+1)
+    
+    for k,p_test in enumerate(testing_frequencies):
+        # create local fork of the exported parameters, and allow user to change starting prior
+        period_params = local_params.copy()
+        print(f"Working on p_test={p_test:.4f}")
+        
+        for prevalence in prev_sequence:
+            f_true = np.array([prevalence,1-prevalence])
+            period_params["m"] = period_params["m"]*prior_decay_rate  # to allow physician's to ignore older information
+            period_params["f_true"] = f_true
+            objective_function_values[k] += objective_function_for_2_by_2(p_test, parameters=period_params)
+
+            # after conducting the experiment for the current period, update the prior for the next period
+            alpha = period_params["m"]*period_params["f_0"]+num_patients*p_test*f_true  # update prior
+            alpha_magnitude = np.sum(alpha)
+            period_params["m"] = alpha_magnitude
+            period_params["f_0"] = alpha/alpha_magnitude
+
+    # we compute the average benefit across all changing values of the disease prevalences
+    objective_function_values /= len(prev_sequence)
+    
+    np.save(os.path.join(save_to, subpath, "avg_objective_values"), np.array(objective_function_values))
+    np.save(os.path.join(save_to, subpath, "prev_sequence"), np.array(prev_sequence))
+    
+    return objective_function_values
+
 def collect_temporal_results(experiment_name, prev_sequence=None, prior_decay_rate=1):
     cwd = os.getcwd()
     experiment_folder = os.path.join(cwd,"diagnostic_value","longer_runs", experiment_name, f"decay_rate_{prior_decay_rate:.4f}")
 
     optimal_testing_results = np.load(os.path.join(experiment_folder, "optimal_sampling_rates.npy"))
     prior_parameters = [None]*len(optimal_testing_results)
+    optimal_objective_values = [None]*len(optimal_testing_results)
 
     # load saved prev sequence if available
     if prev_sequence is None:
@@ -479,17 +525,23 @@ def collect_temporal_results(experiment_name, prev_sequence=None, prior_decay_ra
     for file in os.listdir(experiment_folder):
         # find time index (in case there are ordering issues, use regex)
         index_string_prior = re.findall('prior_at_index_[0123456789]+', file)
+        index_string_obj_vals = re.findall('time_index_[0123456789]+', file)
         
         if len(index_string_prior) > 0:
             time_index=int(index_string_prior[0].split('_')[-1])
             alpha = np.load(os.path.join(experiment_folder, file))
             prior_parameters[time_index] = alpha
+        
+        if len(index_string_obj_vals) > 0:
+            time_index=int(index_string_obj_vals[0].split('_')[2])
+            obj_vals = np.load(os.path.join(experiment_folder, file))
+            optimal_objective_values[time_index] = max(obj_vals)
 
-    return optimal_testing_results, prior_parameters, prev_sequence
+    return optimal_testing_results, prior_parameters, prev_sequence, optimal_objective_values
 
 def plot_temporal_results(experiment_name, prev_sequence=None, prior_decay_rate=1, plotting_granularity=10**3):
     # gather results
-    optimal_testing_freqs, prior_parameters, prev_sequence = collect_temporal_results(experiment_name, prev_sequence, prior_decay_rate=prior_decay_rate)
+    optimal_testing_freqs, prior_parameters, prev_sequence, _ = collect_temporal_results(experiment_name, prev_sequence, prior_decay_rate=prior_decay_rate)
     
     _, (ax1, ax2) = plt.subplots(2, 1)
     
@@ -514,6 +566,28 @@ def plot_temporal_results(experiment_name, prev_sequence=None, prior_decay_rate=
     plt.tight_layout()
     plt.show()
     
+def alt_plot_temporal_results(experiment_name, prev_sequence=None, prior_decay_rate=1, plotting_granularity=10**3):
+    
+    # gather results
+    optimal_testing_freqs, prior_parameters, prev_sequence, obj_vals = collect_temporal_results(experiment_name, prev_sequence, prior_decay_rate=prior_decay_rate)
+    
+    _, (ax1, ax2) = plt.subplots(2, 1)
+    
+    ax1.set_title("Optimal fraction of patients to test over time")
+    ax1.set_ylabel("Optimal testing fraction")
+
+    time_indices = list(range(0, len(prev_sequence)))
+    ax1.scatter(time_indices, optimal_testing_freqs, c="red")
+    
+    ax2.set_title("Optimal value achieved over time")
+    ax2.set_xlabel("Time index")
+    ax2.set_ylabel("Optimal value")
+    
+    ax2.scatter(time_indices, obj_vals, c="red")
+
+    plt.tight_layout()
+    plt.show()
+
 def public_private_breakdown(experiment_name, varying, constant_vars=[], constant_vals=[], varying_vals=None,
                              labels=None, title="", xlabel=""):
     cwd = os.getcwd()
@@ -665,18 +739,34 @@ def augmented_plot(experiment_name, varying, constant_vars=[], constant_vals=[],
     plt.show()
 
 if __name__ == "__main__":
-    #prev_seq = [0.9, 0.84, 0.78, 0.72, 0.66, 0.6, 0.54, 0.6, 0.66, 0.72, 0.78, 0.84, 0.9]
-    plot_temporal_results("slower_prevalence_variation_temporal_old_resistance", prior_decay_rate=0.0050)
-    experiment_name = "revised_cost_monospectral_treatments"
-    varying = "cost_test"
-    # experiment_values = [np.array([0.1, 0.9]), np.array([0.3, 0.7]), np.array([0.5, 0.5]),
-    #                       np.array([0.7, 0.3]), np.array([0.9, 0.1])]
-    chosen_values = [1.4, 2.0, 2.6, 3.2]
-    exported_parameters["resistance"] = np.array([[140/189, 1],[1, 39/57]])
-    # exported_parameters["cost_test"] = 3.6
-    labels = [f"${x:0.2f}" for x in chosen_values]
-    title = "Public and private value with varying diagnostic cost"
-    xlabel = "cost of diagnostic test"
+    delta = 0.03
+    starting_val = 0.9
+    initial_direction = -1
+    #extra_name = "_no_return"
+    extra_name = "_repeats"
+
+    if initial_direction == -1:
+        temp_experiment_name = f"old_resistance_temporal_starting_val_{starting_val}_delta_{delta}_decreasing"
+    else:
+        temp_experiment_name = f"old_resistance_temporal_starting_val_{starting_val}_delta_{delta}_increasing"
+    
+    if extra_name is not None:
+        temp_experiment_name = temp_experiment_name + extra_name
+
+    #temp_experiment_name = f"old_resistance_temporal_starting_val_{starting_val}_delta_{delta}"
+    
+    plot_temporal_results(temp_experiment_name, prior_decay_rate=0.0050)
+    
+    # experiment_name = "revised_cost_monospectral_treatments"
+    # varying = "cost_test"
+    # # experiment_values = [np.array([0.1, 0.9]), np.array([0.3, 0.7]), np.array([0.5, 0.5]),
+    # #                       np.array([0.7, 0.3]), np.array([0.9, 0.1])]
+    # chosen_values = [1.4, 2.0, 2.6, 3.2]
+    # exported_parameters["resistance"] = np.array([[140/189, 1],[1, 39/57]])
+    # # exported_parameters["cost_test"] = 3.6
+    # labels = [f"${x:0.2f}" for x in chosen_values]
+    # title = "Public and private value with varying diagnostic cost"
+    # xlabel = "cost of diagnostic test"
     #public_private_breakdown(experiment_name, varying, varying_vals=chosen_values, 
                              #labels=labels, title=title, xlabel=xlabel)
 

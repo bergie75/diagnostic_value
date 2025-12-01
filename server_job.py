@@ -1,28 +1,25 @@
 from mc_computations import *
 from example_with_maximum import exported_parameters
-import numpy as np
 import os
+import matplotlib.pyplot as plt
+
+delta = 0.015
+starting_val = 0.9
+initial_direction = -1  # -1 means start by decreasing
+prev_seq = [starting_val+initial_direction*i*delta for i in range(0, 6)]
+extra_name = None
+backward = [starting_val-initial_direction*(i-6)*delta for i in range(0, 7)]
+prev_seq.extend(backward)
+
+if initial_direction == -1:
+    experiment_name = f"old_resistance_temporal_starting_val_{starting_val}_delta_{delta}_decreasing"
+else:
+    experiment_name = f"old_resistance_temporal_starting_val_{starting_val}_delta_{delta}_increasing"
+
+if extra_name is not None:
+    experiment_name = experiment_name + extra_name
 
 exported_parameters["resistance"] = np.array([[140/189, 1],[1, 39/57]])
-num_patients = exported_parameters["num_patients"]
+#run_temporal_experiment(experiment_name, prev_seq, local_params=exported_parameters)
 
-# we will save partially completed results as we go
-cwd = os.getcwd()
-save_folder = os.path.join(cwd, "diagnostic_value", "longer_runs", "example_with_wes")
-
-if not os.path.exists(save_folder):
-    os.makedirs(save_folder)
-
-save_file = os.path.join(save_folder, "objective_values")
-
-p_vals = np.linspace(0, 1, num_patients+1)
-obj_vals = np.zeros(num_patients+1)
-
-for i,p in enumerate(p_vals):
-    obj_vals[i] = obj_fun_with_wastewater(p, parameters=exported_parameters)
-    if i % 10 == 0:
-        print(f"Completed {100*i/len(p_vals):.2f}% of task, saving work")
-        np.save(save_file, obj_vals)
-
-# once more to ensure nothing is lost
-np.save(save_file, obj_vals)
+run_optimal_average_experiment(experiment_name, prev_seq, local_params=exported_parameters, prior_decay_rate=5/1000)
