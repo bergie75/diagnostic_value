@@ -32,9 +32,10 @@ wes_prior = 2*np.array([0.7, 0.3])
 # ____________________________________________________________________________
 drug_costs = np.array([0.78,0.31])  # cost in dollars of drugs
 cost_per_qaly = 53.91  # conversion factor between expected outcomes and dollars
-qaly_if_susc = np.array([0.806,0.807]) # benefit to patient in qaly, could adjust to months
+qaly_if_susc = np.array([0.806,0.806]) # benefit to patient in qaly, could adjust to months
 qaly_if_res = np.array([0.68,0.68])  # set to zero for now, could increase if there is residual symptom relief followed by resurgence
 cost_res = np.array([28.98,33.79])*1.3  # cost of follow-on treatment due to resistance
+variance_res = 0.5*cost_res
 cost_test = 2 # cost of giving patient a diagnostic
 
 # ____________________________________________________________________________
@@ -53,11 +54,11 @@ exported_parameters_list = [num_patients, num_treatments, num_pathogens,
                        diagnostic_realizations, prior_update_realizations,
                        f_true, m, f_0,
                        drug_costs, cost_per_qaly, qaly_if_susc, qaly_if_res, cost_res, cost_test,
-                       resistance, p_ignore, wes_prior]
+                       resistance, p_ignore, wes_prior, variance_res]
 
 par_names = ["num_patients", "num_treatments", "num_pathogens",
               "diagnostic_realizations", "prior_update_realizations",
                 "f_true", "m", "f_0", "drug_costs", "cost_per_qaly", "qaly_if_susc", "qaly_if_res", "cost_res", "cost_test",
-                  "resistance", "p_ignore", "wes_prior"]
+                  "resistance", "p_ignore", "wes_prior", "variance_res"]
 
 exported_parameters = dict(zip(par_names, exported_parameters_list))
