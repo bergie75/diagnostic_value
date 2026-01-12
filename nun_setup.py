@@ -34,6 +34,9 @@ def bias_array(bias_value):
     else:
         return np.array([1,2*bias_value-1])
 
+# def bias_array(bias_value):
+#     return np.array([-2*bias_value**2+3*bias_value, 2*bias_value**2-bias_value])
+
 def net_testing_value(bias_value, local_params=exported_parameters):
     # unpack important parameters
     f_true = local_params["f_true"]
@@ -259,7 +262,7 @@ if __name__ == "__main__":
     plt.xlabel("Patient risk for disease one")
     plt.xticks([0,t_vals[first_index], t_vals[last_index], 1], labels=[0,"L", "U", 1])
     plt.figtext(
-    0.43, 0.07, f"Privately chooses testing", wrap=True, horizontalalignment='center', fontsize=8)
+    0.43, 0.09, f"Privately chooses testing", wrap=True, horizontalalignment='center', fontsize=8)
     plt.show()
 
     pop_density = lambda t: edge_cases(t, edge_width=0.3)
@@ -277,17 +280,17 @@ if __name__ == "__main__":
     # plt.ylim(0,1.1*max(density_values))
     # plt.show()
 
-    test_value, non_test_value, testing_frac = value_calculations(base_price, pop_density)
-    bar_locs = [-0.2, 0.2]
+    # test_value, non_test_value, testing_frac = value_calculations(base_price, pop_density)
+    # bar_locs = [-0.2, 0.2]
     
-    plt.xticks(bar_locs, labels=["Value to testers", "Value to non-testers"])
-    plt.ylabel("Value per patient ($)")
-    plt.bar(bar_locs, [test_value, non_test_value], width=0.2)
-    plt.show()
+    # plt.xticks(bar_locs, labels=["Value to testers", "Value to non-testers"])
+    # plt.ylabel("Value per patient ($)")
+    # plt.bar(bar_locs, [test_value, non_test_value], width=0.2)
+    # plt.show()
 
-    test_value, non_test_value, testing_frac = value_calculations(base_price, pop_density, biased_update=True)
+    # test_value, non_test_value, testing_frac = value_calculations(base_price, pop_density, biased_update=True)
     
-    plt.xticks(bar_locs, labels=["Value to testers", "Value to non-testers"])
-    plt.ylabel("Value per patient ($)")
-    plt.bar(bar_locs, [test_value, non_test_value], width=0.2)
-    plt.show()
+    # plt.xticks(bar_locs, labels=["Value to testers", "Value to non-testers"])
+    # plt.ylabel("Value per patient ($)")
+    # plt.bar(bar_locs, [test_value, non_test_value], width=0.2)
+    # plt.show()

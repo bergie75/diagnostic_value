@@ -319,7 +319,7 @@ def nun_philipson(base_price, density_function, subsidy_vals=None, biased_update
     axs[0,0].plot(subsidy_vals, planner_values)
     axs[0,0].scatter(subsidy_vals[max_index], planner_values[max_index], color="red", label="optimal subsidy")
     axs[0,0].set_xlabel("Subsidy per test ($)")
-    axs[0,0].set_ylabel("Patient value - planner costs ($)")
+    axs[0,0].set_ylabel("Value/patient - planner costs/patient ($)")
     axs[0,0].legend()
 
     # private value incentives
@@ -374,7 +374,7 @@ def nun_philipson(base_price, density_function, subsidy_vals=None, biased_update
     bar_locs = [-0.4, 0.0, 0.4]
     
     axs[1,0].set_xticks(bar_locs, labels=["Value to testers", "Value to non-testers", "Cost to planner"])
-    axs[1,0].set_ylabel("Value ($)")
+    axs[1,0].set_ylabel("Value/patient ($)")
     axs[1,0].bar(bar_locs[0:-1], [test_value, non_test_value], width=0.2)
     axs[1,0].bar([0.4], [subsidy_vals[max_index]*testing_frac], width=0.2, color="red")
 
@@ -492,10 +492,8 @@ if __name__ == "__main__":
         else:
             return mid_height
 
-    non_uniform = lambda t: edge_cases(t, edge_width=0.1, edge_height=0.1)
+    non_uniform = lambda t: edge_cases(t, edge_width=0.1, edge_height=0)
     uniform = lambda t: 1
-    # sigma = 1/6
-    # non_uniform = lambda t: (1/sigma)/np.sqrt(2*np.pi)*np.exp(-(1/sigma)**2/2*(t-0.5)**2)
     non_uniform = lambda t: 6*t*(1-t)
 
     def triangular(t):
@@ -505,7 +503,6 @@ if __name__ == "__main__":
             return 4*(1-t)
 
     exported_parameters["cost_res"] *= 1.5
-    nun_philipson(base_price, non_uniform, biased_update=True)
     nun_philipson(base_price, non_uniform)
     
     
